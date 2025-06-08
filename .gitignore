@@ -1,0 +1,12 @@
+# Virtual environments
+venv/
+.conda/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# IDEs
+.vscode/
