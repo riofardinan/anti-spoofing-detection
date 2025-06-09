@@ -2,8 +2,6 @@ import streamlit as st
 
 # Fix NumPy compatibility issues
 import os
-os.environ['NUMPY_EXPERIMENTAL_ARRAY_FUNCTION'] = '0'
-
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
@@ -64,102 +62,6 @@ st.markdown("""
         font-weight: bold;
     }
     
-    .detection-stats {
-        background: #e9ecef;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-    }
-    
-    .realtime-indicator {
-        background: linear-gradient(45deg, #28a745, #20c997);
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-        font-weight: bold;
-        animation: pulse 2s infinite;
-    }
-    
-    @keyframes pulse {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.05); }
-        100% { transform: scale(1); }
-    }
-    
-    /* Navigation Styling */
-    .nav-container {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1rem;
-        border-radius: 15px;
-        margin-bottom: 2rem;
-        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-    }
-    
-    .nav-title {
-        color: white;
-        font-size: 1.5rem;
-        font-weight: bold;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
-    
-    .stRadio > div {
-        flex-direction: row;
-        align-items: center;
-        justify-content: center;
-        gap: 2rem;
-    }
-    
-    .stRadio > div > label {
-        background: rgba(255, 255, 255, 0.1);
-        padding: 0.8rem 1.5rem;
-        border-radius: 25px;
-        color: white !important;
-        font-weight: bold;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-        transition: all 0.3s ease;
-        cursor: pointer;
-        backdrop-filter: blur(10px);
-    }
-    
-    .stRadio > div > label:hover {
-        background: rgba(255, 255, 255, 0.2);
-        border-color: rgba(255, 255, 255, 0.6);
-        transform: translateY(-2px);
-    }
-    
-    .stRadio > div > label[data-checked="true"] {
-        background: rgba(255, 255, 255, 0.9);
-        color: #667eea !important;
-        border-color: white;
-        box-shadow: 0 4px 15px rgba(255, 255, 255, 0.3);
-    }
-    
-    /* Hide radio button circles */
-    .stRadio > div > label > div:first-child {
-        display: none;
-    }
-    
-    .detection-method-container {
-        background: #f8f9fa;
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-    }
-    
-    .method-radio {
-        background: white;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-        border: 2px solid #667eea;
-        margin: 0.3rem;
-        transition: all 0.3s ease;
-    }
-    
-    .method-radio:hover {
-        background: #667eea;
-        color: white;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -197,15 +99,6 @@ def load_model():
             return None
             
         model.eval()
-        
-        # Test the model with a dummy input
-        try:
-            dummy_input = torch.randn(1, 3, 224, 224)
-            with torch.no_grad():
-                _ = model(dummy_input)
-        except Exception as e:
-            st.error(f"Model test failed: {str(e)}")
-            return None
         
         return model
         
@@ -245,7 +138,6 @@ def preprocess_image(image):
         return torch.zeros(1, 3, 224, 224)
 
 def predict_liveness(model, image):
-    """Predict if the image is live or spoofed"""
     if model is None:
         return "Error", 0.0
     
@@ -260,7 +152,7 @@ def predict_liveness(model, image):
             outputs = model(preprocessed)
             probabilities = torch.nn.functional.softmax(outputs, dim=1)
             
-            # Assuming class 0 = live, class 1 = spoof
+            # class 0 = live, class 1 = spoof
             live_confidence = probabilities[0][0].item()
             spoof_confidence = probabilities[0][1].item()
             
@@ -275,74 +167,102 @@ def predict_liveness(model, image):
 
 class VideoProcessor:
     def __init__(self):
-        self.model = load_model()
-        self.frame_count = 0
-        self.detection_interval = 5  # Process every 5th frame for performance
+        try:
+            self.model = load_model()
+            self.frame_count = 0
+            self.detection_interval = 3  # Process every 3rd frame for better performance
+            self.last_prediction = "Initializing..."
+            self.last_confidence = 0.0
+        except Exception as e:
+            print(f"VideoProcessor init error: {e}")
+            self.model = None
         
     def recv(self, frame):
-        """Process video frame for real-time detection"""
-        img = frame.to_ndarray(format="bgr24")
-        
-        # Process detection every nth frame
-        if self.frame_count % self.detection_interval == 0:
-            try:
-                prediction, confidence = predict_liveness(self.model, img)
-                
-                # Update session state
-                st.session_state.current_prediction = prediction
-                st.session_state.current_confidence = confidence
-                
-                # Update detection counts
-                if prediction == "LIVE":
-                    st.session_state.detection_count['live'] += 1
-                elif prediction == "SPOOF":
-                    st.session_state.detection_count['spoof'] += 1
-                
-                # Store results
-                st.session_state.detection_results.append({
-                    'prediction': prediction,
-                    'confidence': confidence,
-                    'timestamp': time.time()
-                })
-                
-                # Keep only last 50 results
-                if len(st.session_state.detection_results) > 50:
-                    st.session_state.detection_results.pop(0)
-                    
-            except Exception as e:
-                print(f"Detection error: {e}")
-        
-        self.frame_count += 1
-        
-        # Draw detection result on frame
         try:
-            prediction = st.session_state.current_prediction
-            confidence = st.session_state.current_confidence
+            img = frame.to_ndarray(format="bgr24")
+            height, width = img.shape[:2]
             
-            # Choose color based on prediction
-            if prediction == "LIVE":
-                color = (0, 255, 0)  # Green
-            elif prediction == "SPOOF":
-                color = (0, 0, 255)  # Red
-            else:
-                color = (128, 128, 128)  # Gray
+            # Process detection every nth frame
+            if self.frame_count % self.detection_interval == 0 and self.model is not None:
+                try:
+                    prediction, confidence = predict_liveness(self.model, img)
+                    
+                    # Store locally for frame display
+                    self.last_prediction = prediction
+                    self.last_confidence = confidence
+                    
+                    # Try to update session state safely
+                    try:
+                        st.session_state.current_prediction = prediction
+                        st.session_state.current_confidence = confidence
+                        
+                        # Update detection counts
+                        if prediction == "LIVE":
+                            st.session_state.detection_count['live'] += 1
+                        elif prediction == "SPOOF":
+                            st.session_state.detection_count['spoof'] += 1
+                        
+                        # Store results
+                        st.session_state.detection_results.append({
+                            'prediction': prediction,
+                            'confidence': confidence,
+                            'timestamp': time.time()
+                        })
+                        
+                        # Keep only last 50 results
+                        if len(st.session_state.detection_results) > 50:
+                            st.session_state.detection_results.pop(0)
+                    except Exception as session_error:
+                        print(f"Session state update failed: {session_error}")
+                        
+                except Exception as e:
+                    print(f"Detection error: {e}")
+                    self.last_prediction = "Detection Error"
+                    self.last_confidence = 0.0
             
-            # Draw rectangle and text
-            cv2.rectangle(img, (10, 10), (400, 100), color, 2)
-            cv2.putText(img, f"Status: {prediction}", (20, 40), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-            cv2.putText(img, f"Confidence: {confidence:.2%}", (20, 70), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                       
+            self.frame_count += 1
+            
+            # Draw detection result on frame
+            try:
+                prediction = self.last_prediction
+                confidence = self.last_confidence
+                
+                # Choose color based on prediction
+                if prediction == "LIVE":
+                    color = (0, 255, 0)  # Green
+                elif prediction == "SPOOF":
+                    color = (0, 0, 255)  # Red
+                else:
+                    color = (128, 128, 128)  # Gray
+                
+                # Draw rectangle and text
+                cv2.rectangle(img, (10, 10), (400, 100), color, 2)
+                cv2.putText(img, f"Status: {prediction}", (20, 40), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+                cv2.putText(img, f"Confidence: {confidence:.2%}", (20, 70), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                           
+            except Exception as e:
+                print(f"Frame drawing error: {e}")
+            
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+            
         except Exception as e:
-            pass
-        
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+            print(f"VideoProcessor recv error: {e}")
+            # Return original frame if processing fails
+            try:
+                img = frame.to_ndarray(format="bgr24")
+                return av.VideoFrame.from_ndarray(img, format="bgr24")
+            except:
+                return frame
 
-# RTC Configuration for better connection
+# RTC Configuration for better connection (only if WebRTC is available)
 RTC_CONFIGURATION = RTCConfiguration({
     "iceServers": [
         {"urls": ["stun:stun.l.google.com:19302"]},
+        {"urls": ["stun:stun1.l.google.com:19302"]},
+        {"urls": ["stun:stun2.l.google.com:19302"]},
+        {"urls": ["stun:stun.services.mozilla.com"]},
     ]
 })
 
@@ -372,26 +292,6 @@ if page == "Documentation":
     Sistem deteksi anti-spoofing ini menggunakan deep learning untuk membedakan antara wajah manusia asli (live) 
     dan serangan spoofing secara real-time.
     """)
-    
-    # System Info for debugging
-    with st.expander("🔧 System Information (Debug)"):
-        st.write("**Environment:**")
-        st.write(f"- PyTorch Version: {torch.__version__}")
-        st.write(f"- NumPy Version: {np.__version__}")
-        st.write(f"- OpenCV Version: {cv2.__version__}")
-        st.write(f"- Streamlit Version: {st.__version__}")
-        
-        # Check if model file exists
-        import os
-        model_exists = os.path.exists('model/mobilenet_v2.pth')
-        st.write(f"- Model File Exists: {'✅ Yes' if model_exists else '❌ No'}")
-        
-        if model_exists:
-            try:
-                file_size = os.path.getsize('model/mobilenet_v2.pth') / (1024*1024)
-                st.write(f"- Model File Size: {file_size:.1f} MB")
-            except:
-                st.write("- Model File Size: Unable to determine")
     
     st.markdown("---")
     st.markdown("## 🚀 Architecture & Features")
@@ -504,25 +404,47 @@ elif page == "Detection":
     detection_method = st.session_state.selected_method
     
     if detection_method == "🎥 Real-time Detection":
+        # Check if running on Streamlit Cloud
+        is_streamlit_cloud = os.environ.get('STREAMLIT_SHARING_MODE') == 'cloud' or \
+                           'streamlit.app' in os.environ.get('STREAMLIT_SERVER_HEADLESS', '') or \
+                           os.path.exists('/mount/src')
+        
+        if is_streamlit_cloud:
+            st.warning("⚠️ **WebRTC Real-time Detection** may have limited functionality on Streamlit Cloud due to network restrictions.")
+            st.info("💡 **Tip:** For best real-time detection experience, please run the app locally or use **Camera Capture** mode instead.")
 
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            # WebRTC video streamer
-            webrtc_ctx = webrtc_streamer(
-                key="live-detection",
-                mode=WebRtcMode.SENDRECV,
-                rtc_configuration=RTC_CONFIGURATION,
-                video_processor_factory=VideoProcessor,
-                media_stream_constraints={"video": True, "audio": False},
-                async_processing=True,
-            )
-
+            try:
+                # WebRTC video streamer with enhanced error handling
+                webrtc_ctx = webrtc_streamer(
+                    key="live-detection",
+                    mode=WebRtcMode.SENDRECV,
+                    rtc_configuration=RTC_CONFIGURATION,
+                    video_processor_factory=VideoProcessor,
+                    media_stream_constraints={"video": True, "audio": False},
+                    async_processing=True,
+                )
+                
+                # Show connection status
+                if webrtc_ctx.state.playing:
+                    st.success("✅ WebRTC Connection Active")
+                elif webrtc_ctx.state.signalling:
+                    st.info("🔄 Establishing Connection...")
+                else:
+                    st.warning("⚠️ Camera Not Connected")
+                    
+            except Exception as e:
+                st.error("❌ WebRTC Failed to Initialize")
+                st.error(f"Error: {str(e)}")
+                st.info("💡 **Alternative:** Please use **Camera Capture** mode for image-based detection.")
+                
         with col2:
             st.info("💡 Notes:")
             st.markdown("""
-            - **Allow camera access**
-            - **Position face clearly**
+            - **Allow camera access** when prompted
+            - **Position face clearly** in the center
             - **Ensure good lighting**
             """)
             
