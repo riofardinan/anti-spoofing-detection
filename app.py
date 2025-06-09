@@ -1,4 +1,9 @@
 import streamlit as st
+
+# Fix NumPy compatibility issues
+import os
+os.environ['NUMPY_EXPERIMENTAL_ARRAY_FUNCTION'] = '0'
+
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
@@ -170,57 +175,103 @@ if 'current_confidence' not in st.session_state:
 
 @st.cache_resource
 def load_model():
-    """Load the pre-trained MobileNetV2 model"""
     try:
-        # Create MobileNetV2 model architecture
-        model = models.mobilenet_v2(pretrained=False)
-        # Modify the classifier for binary classification (live vs spoof)
+        # Try loading with new weights parameter first
+        try:
+            model = models.mobilenet_v2(weights=None)
+        except Exception:
+            # Fallback to old parameter if new one fails
+            model = models.mobilenet_v2(pretrained=False)
+
         model.classifier = nn.Sequential(
             nn.Dropout(0.2),
             nn.Linear(model.last_channel, 2)
         )
         
-        # Load the trained weights
-        model.load_state_dict(torch.load('model/mobilenet_v2.pth', map_location='cpu'))
+        # Load the trained weights with error handling
+        try:
+            state_dict = torch.load('model/mobilenet_v2.pth', map_location='cpu')
+            model.load_state_dict(state_dict)
+        except Exception as e:
+            st.error(f"Failed to load model weights: {str(e)}")
+            return None
+            
         model.eval()
         
+        # Test the model with a dummy input
+        try:
+            dummy_input = torch.randn(1, 3, 224, 224)
+            with torch.no_grad():
+                _ = model(dummy_input)
+        except Exception as e:
+            st.error(f"Model test failed: {str(e)}")
+            return None
+        
         return model
+        
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
         return None
 
 def preprocess_image(image):
-    """Preprocess image for model inference"""
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                           std=[0.229, 0.224, 0.225])
-    ])
-    
-    if isinstance(image, np.ndarray):
-        image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-    
-    return transform(image).unsqueeze(0)
+    try:
+        # Convert image to PIL Image if needed
+        if isinstance(image, np.ndarray):
+            # If numpy array, convert from BGR to RGB
+            if len(image.shape) == 3:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(image)
+        elif not isinstance(image, Image.Image):
+            # If other format, try to convert
+            image = Image.open(image) if hasattr(image, 'read') else image
+        
+        # Ensure image is in RGB mode
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Define transform
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                               std=[0.229, 0.224, 0.225])
+        ])
+        
+        return transform(image).unsqueeze(0)
+        
+    except Exception as e:
+        print(f"Error in preprocess_image: {e}")
+        # Return a default tensor if preprocessing fails
+        return torch.zeros(1, 3, 224, 224)
 
 def predict_liveness(model, image):
     """Predict if the image is live or spoofed"""
     if model is None:
         return "Error", 0.0
     
-    with torch.no_grad():
-        preprocessed = preprocess_image(image)
-        outputs = model(preprocessed)
-        probabilities = torch.nn.functional.softmax(outputs, dim=1)
-        
-        # Assuming class 0 = live, class 1 = spoof
-        live_confidence = probabilities[0][0].item()
-        spoof_confidence = probabilities[0][1].item()
-        
-        if live_confidence > spoof_confidence:
-            return "LIVE", live_confidence
-        else:
-            return "SPOOF", spoof_confidence
+    try:
+        with torch.no_grad():
+            preprocessed = preprocess_image(image)
+            
+            # Check if preprocessing returned valid tensor
+            if preprocessed is None or torch.all(preprocessed == 0):
+                return "Error", 0.0
+                
+            outputs = model(preprocessed)
+            probabilities = torch.nn.functional.softmax(outputs, dim=1)
+            
+            # Assuming class 0 = live, class 1 = spoof
+            live_confidence = probabilities[0][0].item()
+            spoof_confidence = probabilities[0][1].item()
+            
+            if live_confidence > spoof_confidence:
+                return "LIVE", live_confidence
+            else:
+                return "SPOOF", spoof_confidence
+                
+    except Exception as e:
+        print(f"Error in predict_liveness: {e}")
+        return "Error", 0.0
 
 class VideoProcessor:
     def __init__(self):
@@ -322,7 +373,26 @@ if page == "Documentation":
     dan serangan spoofing secara real-time.
     """)
     
-    # Feature Overview
+    # System Info for debugging
+    with st.expander("🔧 System Information (Debug)"):
+        st.write("**Environment:**")
+        st.write(f"- PyTorch Version: {torch.__version__}")
+        st.write(f"- NumPy Version: {np.__version__}")
+        st.write(f"- OpenCV Version: {cv2.__version__}")
+        st.write(f"- Streamlit Version: {st.__version__}")
+        
+        # Check if model file exists
+        import os
+        model_exists = os.path.exists('model/mobilenet_v2.pth')
+        st.write(f"- Model File Exists: {'✅ Yes' if model_exists else '❌ No'}")
+        
+        if model_exists:
+            try:
+                file_size = os.path.getsize('model/mobilenet_v2.pth') / (1024*1024)
+                st.write(f"- Model File Size: {file_size:.1f} MB")
+            except:
+                st.write("- Model File Size: Unable to determine")
+    
     st.markdown("---")
     st.markdown("## 🚀 Architecture & Features")
     
@@ -352,7 +422,6 @@ if page == "Documentation":
         </div>
         """, unsafe_allow_html=True)
         
-    # How to Use Section
     st.markdown("---")
     st.markdown("## 🚀 How to Use")
     
@@ -363,7 +432,6 @@ if page == "Documentation":
     4. **Use control buttons** untuk start/stop detection
     """)
     
-    # Installation
     st.markdown("---")
     st.markdown("## 📦 Local Installation")
     
@@ -384,7 +452,6 @@ if page == "Documentation":
         streamlit run app.py
     """, language="bash")
 
-    # Installation
     st.markdown("---")
     st.markdown("## 📦 About MobileNetV2")
     
@@ -393,9 +460,6 @@ if page == "Documentation":
     Model ini menggunakan arsitektur Depthwise Separable Convolutions untuk mengurangi kompleksitas komputasi.
     """)
     
-  
-  
-
 elif page == "Detection":
     # Load model
     model = load_model()
@@ -471,32 +535,40 @@ elif page == "Detection":
             camera_input = st.camera_input("Take a photo for detection")
             
             if camera_input is not None:
-                # Convert to PIL Image
-                image = Image.open(camera_input)
-                
-                # Display the image
-                st.image(image, caption="Captured Image", use_column_width=True)
-                
-                # Predict
-                with st.spinner("🔄 Analyzing..."):
-                    prediction, confidence = predict_liveness(model, image)
-                
-                # Display results in col2
-                with col2:
-                    st.markdown("### 📊 Results")
+                try:
+                    # Convert to PIL Image
+                    image = Image.open(camera_input)
                     
-                    if prediction == "LIVE":
-                        st.markdown(f'<p class="status-live">✅ STATUS: {prediction}</p>', 
-                                  unsafe_allow_html=True)
-                    else:
-                        st.markdown(f'<p class="status-spoof">❌ STATUS: {prediction}</p>', 
-                                  unsafe_allow_html=True)
+                    # Display the image
+                    st.image(image, caption="Captured Image", use_column_width=True)
                     
-                    st.markdown(f'<p class="confidence-score">🎯 Confidence: {confidence:.2%}</p>', 
-                              unsafe_allow_html=True)
+                    # Predict
+                    with st.spinner("🔄 Analyzing..."):
+                        prediction, confidence = predict_liveness(model, image)
                     
-                    # Confidence bar
-                    st.progress(confidence)
+                    # Display results in col2
+                    with col2:
+                        st.markdown("### 📊 Results")
+                        
+                        if prediction == "Error":
+                            st.error("❌ Failed to analyze image. Please try again with a different image.")
+                        elif prediction == "LIVE":
+                            st.markdown(f'<p class="status-live">✅ STATUS: {prediction}</p>', 
+                                      unsafe_allow_html=True)
+                            st.markdown(f'<p class="confidence-score">🎯 Confidence: {confidence:.2%}</p>', 
+                                      unsafe_allow_html=True)
+                            st.progress(confidence)
+                        else:
+                            st.markdown(f'<p class="status-spoof">❌ STATUS: {prediction}</p>', 
+                                      unsafe_allow_html=True)
+                            st.markdown(f'<p class="confidence-score">🎯 Confidence: {confidence:.2%}</p>', 
+                                      unsafe_allow_html=True)
+                            st.progress(confidence)
+                            
+                except Exception as e:
+                    with col2:
+                        st.error("❌ Error processing image. Please try again.")
+                        st.info("💡 Make sure the image is clear and contains a face.")
                     
         with col2:
             if camera_input is None:
@@ -513,30 +585,38 @@ elif page == "Detection":
             )
             
             if uploaded_file is not None:
-                # Display the uploaded image
-                image = Image.open(uploaded_file)
-                st.image(image, caption="Uploaded Image", use_column_width=True)
-                
-                # Predict
-                with st.spinner("🔄 Analyzing uploaded image..."):
-                    prediction, confidence = predict_liveness(model, image)
-                
-                # Display results in col2
-                with col2:
-                    st.markdown("### 📊 Results")
+                try:
+                    # Display the uploaded image
+                    image = Image.open(uploaded_file)
+                    st.image(image, caption="Uploaded Image", use_column_width=True)
                     
-                    if prediction == "LIVE":
-                        st.markdown(f'<p class="status-live">✅ STATUS: {prediction}</p>', 
-                                  unsafe_allow_html=True)
-                    else:
-                        st.markdown(f'<p class="status-spoof">❌ STATUS: {prediction}</p>', 
-                                  unsafe_allow_html=True)
+                    # Predict
+                    with st.spinner("🔄 Analyzing uploaded image..."):
+                        prediction, confidence = predict_liveness(model, image)
                     
-                    st.markdown(f'<p class="confidence-score">🎯 Confidence: {confidence:.2%}</p>', 
-                              unsafe_allow_html=True)
-                    
-                    # Confidence bar
-                    st.progress(confidence)
+                    # Display results in col2
+                    with col2:
+                        st.markdown("### 📊 Results")
+                        
+                        if prediction == "Error":
+                            st.error("❌ Failed to analyze image. Please try again with a different image.")
+                        elif prediction == "LIVE":
+                            st.markdown(f'<p class="status-live">✅ STATUS: {prediction}</p>', 
+                                      unsafe_allow_html=True)
+                            st.markdown(f'<p class="confidence-score">🎯 Confidence: {confidence:.2%}</p>', 
+                                      unsafe_allow_html=True)
+                            st.progress(confidence)
+                        else:
+                            st.markdown(f'<p class="status-spoof">❌ STATUS: {prediction}</p>', 
+                                      unsafe_allow_html=True)
+                            st.markdown(f'<p class="confidence-score">🎯 Confidence: {confidence:.2%}</p>', 
+                                      unsafe_allow_html=True)
+                            st.progress(confidence)
+                            
+                except Exception as e:
+                    with col2:
+                        st.error("❌ Error processing uploaded image. Please try a different image.")
+                        st.info("💡 Supported formats: JPG, PNG, BMP. Make sure the image contains a clear face.")
                     
         with col2:
             if uploaded_file is None:
@@ -548,7 +628,7 @@ st.markdown(
     """
     <div style='text-align: center; color: #666; padding: 1rem;'>
     🛡️ Anti-Spoofing Detection System | Built with Streamlit, PyTorch & WebRTC | 
-    <a href='https://streamlit.io' target='_blank'>Streamlit Cloud Ready</a>
+    <a href='https://anti-spoofing-detection.streamlit.app/' target='_blank'>Streamlit Cloud Ready</a>
     </div>
     """, 
     unsafe_allow_html=True
