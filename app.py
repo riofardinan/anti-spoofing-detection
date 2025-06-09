@@ -338,14 +338,14 @@ if page == "Documentation":
     
     st.code("""
         # Clone repository
-        git clone https://github.com/riofardinan/anti-spoofing.git
+        git clone https://github.com/riofardinan/anti-spoofing-detection.git
         cd anti-spoofing
 
-        # Setup conda environment
-        conda env create -f environment.yml
-        conda activate anti-spoofing
+        # Setup with pip venv
+        python -m venv anti-spoofing
+        source anti-spoofing/bin/activate
 
-        # Or setup with pip
+        # Install dependencies
         pip install -r requirements.txt
 
         # Run application
@@ -550,7 +550,7 @@ st.markdown(
     """
     <div style='text-align: center; color: #666; padding: 1rem;'>
     🛡️ Anti-Spoofing Detection System | Built with Streamlit, PyTorch & WebRTC | 
-    <a href='https://anti-spoofing-detection.streamlit.app/' target='_blank'>Streamlit Cloud Ready</a>
+    <a href='https://github.com/riofardinan/anti-spoofing-detection' target='_blank'>GitHub</a>
     </div>
     """, 
     unsafe_allow_html=True
