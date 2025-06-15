@@ -18,7 +18,7 @@ streamlit run app.py
 
 ## Model Metrics
 
-- **Accuracy**: -
-- **APCER**: -
-- **BPCER**: -
-- **ACER**: -
+- **Accuracy**: 0.8411
+- **APCER**: 0.2240
+- **BPCER**: 0.0045
+- **ACER**: 0.1142
